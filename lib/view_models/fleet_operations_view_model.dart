@@ -18,6 +18,7 @@ class FleetOperationsViewModel extends ChangeNotifier {
   List<Map<String, dynamic>> _filteredBuses = [];
   List<BusSchedule> _schedules = [];
   Map<String, List<LatLng>> _polylines = {};
+  bool _isSuperAdmin = false;
 
   String? _selectedBusId;
   bool _isLoading = true;
@@ -46,10 +47,18 @@ class FleetOperationsViewModel extends ChangeNotifier {
   DateTime get selectedDate => _selectedDate;
   DateTime get currentMonth => _currentMonth;
   int get activeCount => _allBuses.length;
+  bool get isSuperAdmin => _isSuperAdmin;
+
+  void setSuperAdmin(bool value) {
+    if (_isSuperAdmin != value) {
+      _isSuperAdmin = value;
+      applyFilters();
+    }
+  }
 
   Map<String, dynamic>? get selectedBus {
     if (_selectedBusId == null) return null;
-    final match = _allBuses.where((b) => b['id'] == _selectedBusId);
+    final match = _filteredBuses.where((b) => b['id'] == _selectedBusId);
     if (match.isEmpty) return null;
     final bus = match.first;
     return bus.isNotEmpty ? bus : null;
@@ -168,6 +177,42 @@ class FleetOperationsViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool _isRouteMatching(String busFrom, String busTo, String selectedRouteFilter) {
+    if (selectedRouteFilter == 'All') return true;
+    
+    // Split the selected route filter by common route separators
+    final parts = selectedRouteFilter.split(RegExp(r'(➔|->|➔|➔|to)'));
+    if (parts.length < 2) return false;
+    
+    final filterFrom = parts[0].trim().toLowerCase();
+    final filterTo = parts[1].trim().toLowerCase();
+    
+    final bFrom = busFrom.trim().toLowerCase();
+    final bTo = busTo.trim().toLowerCase();
+    
+    // Helper to check if two strings are equivalent (including common abbreviations or spelling errors)
+    bool matchPart(String actual, String filter) {
+      if (actual == filter) return true;
+      if (actual.contains(filter) || filter.contains(actual)) return true;
+      
+      // Handle Baghdad Campus vs Baghdad
+      final normActual = actual.replaceAll('campus', '').trim();
+      final normFilter = filter.replaceAll('campus', '').trim();
+      if (normActual == normFilter) return true;
+      
+      // Handle Abbasia vs Abasia spelling difference
+      final abbasiaSpelling = ['abbasia', 'abasia', 'old'];
+      if (abbasiaSpelling.any((s) => normActual.contains(s)) && 
+          abbasiaSpelling.any((s) => normFilter.contains(s))) {
+        return true;
+      }
+      
+      return false;
+    }
+    
+    return matchPart(bFrom, filterFrom) && matchPart(bTo, filterTo);
+  }
+
   void applyFilters() {
     List<Map<String, dynamic>> temp = _allBuses;
 
@@ -191,8 +236,8 @@ class FleetOperationsViewModel extends ChangeNotifier {
     // Gender filter
     if (_selectedGenderFilter != 'All') {
       temp = temp.where((bus) {
-        final gender = (bus['gender'] ?? '').toString().toLowerCase();
-        return gender == _selectedGenderFilter.toLowerCase();
+        final gender = (bus['gender'] ?? '').toString().toLowerCase().trim();
+        return gender == _selectedGenderFilter.toLowerCase().trim();
       }).toList();
     }
 
@@ -201,16 +246,15 @@ class FleetOperationsViewModel extends ChangeNotifier {
       temp = temp.where((bus) {
         final from = (bus['from'] ?? '').toString();
         final to = (bus['to'] ?? '').toString();
-        final routeLabel = '$from ➔ $to';
-        return routeLabel == _selectedRouteFilter;
+        return _isRouteMatching(from, to, _selectedRouteFilter);
       }).toList();
     }
 
     // Bus number filter
     if (_selectedBusNumberFilter != 'All') {
       temp = temp.where((bus) {
-        final busNum = (bus['busNumber'] ?? '').toString();
-        return busNum == _selectedBusNumberFilter;
+        final busNum = (bus['busNumber'] ?? '').toString().toLowerCase().trim();
+        return busNum == _selectedBusNumberFilter.toLowerCase().trim();
       }).toList();
     }
 
@@ -221,13 +265,32 @@ class FleetOperationsViewModel extends ChangeNotifier {
   // --- Derived Data ---
   List<String> get uniqueRoutes {
     final routes = <String>{};
-    // Use defined schedules (official routes) instead of only active buses
+    // Use defined schedules (official routes)
     for (final schedule in _schedules) {
       if (schedule.from.isNotEmpty && schedule.to.isNotEmpty) {
-        routes.add('${schedule.from} ➔ ${schedule.to}');
+        routes.add('${schedule.from.trim()} ➔ ${schedule.to.trim()}');
       }
     }
-    return ['All', ...routes.toList()];
+    // Add routes from active buses if they don't fuzzy match any schedule route
+    for (final bus in _allBuses) {
+      final busFrom = (bus['from'] ?? '').toString().trim();
+      final busTo = (bus['to'] ?? '').toString().trim();
+      if (busFrom.isNotEmpty && busTo.isNotEmpty) {
+        final busRouteLabel = '$busFrom ➔ $busTo';
+        
+        bool alreadyExists = false;
+        for (final r in routes) {
+          if (_isRouteMatching(busFrom, busTo, r)) {
+            alreadyExists = true;
+            break;
+          }
+        }
+        if (!alreadyExists) {
+          routes.add(busRouteLabel);
+        }
+      }
+    }
+    return ['All', ...routes];
   }
 
   List<String> get uniqueBusNumbers {
@@ -249,6 +312,13 @@ class FleetOperationsViewModel extends ChangeNotifier {
   // --- Schedule Matching ---
   BusSchedule? getMatchingSchedule(Map<String, dynamic> bus) {
     if (_schedules.isEmpty) return null;
+    
+    final scheduleId = (bus['scheduleId'] ?? '').toString().trim();
+    if (scheduleId.isNotEmpty) {
+      final matchedById = _schedules.where((s) => s.id == scheduleId).toList();
+      if (matchedById.isNotEmpty) return matchedById.first;
+    }
+
     final busNum = (bus['busNumber'] ?? '').toString().toLowerCase().trim();
     if (busNum.isEmpty) return null;
 
@@ -360,6 +430,88 @@ class FleetOperationsViewModel extends ChangeNotifier {
 
   void selectDate(DateTime date) {
     _selectedDate = date;
+    notifyListeners();
+  }
+
+  Future<void> forceStopTracking(Map<String, dynamic> bus) async {
+    final busId = (bus['id'] ?? '').toString();
+    final busNumber = (bus['busNumber'] ?? '').toString();
+    final driverId = (bus['driverId'] ?? '').toString();
+    final tripId = (bus['tripId'] ?? '').toString();
+
+    if (busId.isEmpty) return;
+
+    // 1. Remove from active buses in RTDB using the actual key
+    await _busesRef.child(busId).remove();
+
+    // Also remove by busNumber if it exists and is different from busId
+    if (busNumber.isNotEmpty && busNumber != busId) {
+      await _busesRef.child(busNumber).remove();
+    }
+
+    // 2. Clear local selection if this was the selected bus
+    if (_selectedBusId == busId || _selectedBusId == busNumber) {
+      _selectedBusId = null;
+    }
+
+    // 3. Mark trip as cancelled/force_stopped in RTDB trips collection
+    if (driverId.isNotEmpty && tripId.isNotEmpty) {
+      await FirebaseDatabase.instance.ref('trips').child(driverId).child(tripId).update({
+        'endTime': ServerValue.timestamp,
+        'status': 'force_stopped',
+      });
+    }
+
+    // 4. Update Firestore drivers collection to Offline status
+    if (driverId.isNotEmpty) {
+      try {
+        await FirebaseFirestore.instance.collection('drivers').doc(driverId).update({
+          'status': 'Offline',
+        });
+      } catch (e) {
+        debugPrint("Error updating driver status: $e");
+      }
+    }
+
+    // 5. Update Firestore trips and active_trips collections
+    if (tripId.isNotEmpty) {
+      try {
+        await FirebaseFirestore.instance.collection('trips').doc(tripId).update({
+          'endTime': FieldValue.serverTimestamp(),
+          'status': 'force_stopped',
+        });
+      } catch (e) {
+        debugPrint("Error updating Firestore trips: $e");
+      }
+
+      try {
+        await FirebaseFirestore.instance.collection('active_trips').doc(tripId).delete();
+      } catch (e) {
+        debugPrint("Error deleting active trip: $e");
+      }
+
+      // Add to completed_trips collection as 'force_stopped'
+      try {
+        await FirebaseFirestore.instance.collection('completed_trips').doc(tripId).set({
+          'tripId': tripId,
+          'driverId': driverId,
+          'driverName': bus['driverName'] ?? 'Driver',
+          'busNumber': busNumber,
+          'plateNumber': bus['plateNumber'] ?? '',
+          'from': bus['from'] ?? 'Unknown',
+          'to': bus['to'] ?? 'Unknown',
+          'gender': bus['gender'] ?? 'Combined',
+          'startTime': FieldValue.serverTimestamp(),
+          'endTime': FieldValue.serverTimestamp(),
+          'status': 'force_stopped',
+          'scheduleId': bus['scheduleId'] ?? '',
+          'date': DateTime.now().toIso8601String().substring(0, 10),
+          'revenue': 0.0,
+        });
+      } catch (e) {
+        debugPrint("Error creating completed trip record: $e");
+      }
+    }
     notifyListeners();
   }
 

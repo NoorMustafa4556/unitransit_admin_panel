@@ -252,52 +252,10 @@ class FirebaseService {
       // 2. Delete from Realtime Database
       await _rtdb.ref('official_routes').child(routeName).remove();
       
-      // 3. Delete custom polylines
-      await _rtdb.ref('custom_polylines').child(routeName).remove();
-      
-      // 4. Delete stops associated with this route
-      final stopsSnapshot = await _rtdb.ref('stops').get();
-      if (stopsSnapshot.exists && stopsSnapshot.value is Map) {
-        final stopsData = stopsSnapshot.value as Map;
-        stopsData.forEach((key, value) async {
-          if (value is Map && value['route'] == routeName) {
-            await _rtdb.ref('stops').child(key).remove();
-          }
-        });
-      }
+      // 3. Keep custom polylines and stops intact as requested by the user
     } else {
-      // Fetch the schedule first to inspect if it is a Master Route template
-      try {
-        final scheduleDoc = await _db.collection('schedules').doc(id).get();
-        if (scheduleDoc.exists) {
-          final data = scheduleDoc.data() ?? {};
-          final date = data['date'] as String?;
-          final operatingDays = data['operatingDays'] as List?;
-          
-          final isMasterRoute = (date == null || date.trim().isEmpty) &&
-                                (operatingDays == null || operatingDays.isEmpty);
-          
-          if (isMasterRoute) {
-            // It is a Master Route template! DO NOT delete the document.
-            // Just clear its assignment details so the route template remains in the system.
-            await _db.collection('schedules').doc(id).update({
-              'busNumber': 'TBA',
-              'departureTime': 'TBA',
-              'assignedDriverId': null,
-              'assignedDriverName': null,
-              'assignedConductorName': null,
-            });
-          } else {
-            // It is a specific date daily assignment instance.
-            // It is safe to delete it entirely from Firestore.
-            await _db.collection('schedules').doc(id).delete();
-          }
-        }
-      } catch (e) {
-        print("Error checking schedule type in deleteBusSchedule: $e");
-        // Fallback: safe delete if there are other schedules
-        await _db.collection('schedules').doc(id).delete();
-      }
+      // Just delete the schedule from Firestore without affecting the official route
+      await _db.collection('schedules').doc(id).delete();
     }
   }
 
@@ -435,6 +393,7 @@ class FirebaseService {
     StreamSubscription? driverSub;
     StreamSubscription? studentSub;
     StreamSubscription? tripsSub;
+    StreamSubscription? busesSub;
 
     int drivers = 0;
     int students = 0;
@@ -468,11 +427,21 @@ class FirebaseService {
               updateStats();
             });
 
+        // Truly Real-time Active Trips count from RTDB buses node
+        busesSub = _rtdb.ref('buses').onValue.listen((event) {
+          final data = event.snapshot.value;
+          if (data is Map) {
+            activeTripsCount = data.length;
+          } else {
+            activeTripsCount = 0;
+          }
+          updateStats();
+        });
+
         tripsSub = _db.collection('completed_trips').snapshots().listen((
           snap,
         ) async {
           double tempRevenue = 0.0;
-          int tempActive = 0;
           for (var doc in snap.docs) {
             final data = doc.data();
             final amount =
@@ -483,36 +452,9 @@ class FirebaseService {
                 data['price'] ??
                 0;
             tempRevenue += (amount is num ? amount.toDouble() : 0.0);
-
-            final status = data['status']?.toString().toLowerCase();
-            if (status == 'active' ||
-                status == 'in_progress' ||
-                status == 'ongoing' ||
-                data['isActive'] == true) {
-              tempActive++;
-            }
-          }
-
-          if (tempActive == 0) {
-            try {
-              final activeTripsSnapshot =
-                  await _db.collection('active_trips').get();
-              tempActive += activeTripsSnapshot.docs.length;
-            } catch (_) {}
-            if (tempActive == 0) {
-              try {
-                final tripsSnapshot =
-                    await _db
-                        .collection('trips')
-                        .where('status', isEqualTo: 'active')
-                        .get();
-                tempActive += tripsSnapshot.docs.length;
-              } catch (_) {}
-            }
           }
 
           revenue = tempRevenue;
-          activeTripsCount = tempActive;
           updateStats();
         });
       },
@@ -520,6 +462,7 @@ class FirebaseService {
         driverSub?.cancel();
         studentSub?.cancel();
         tripsSub?.cancel();
+        busesSub?.cancel();
       },
     );
 
@@ -541,22 +484,33 @@ class FirebaseService {
     await _rtdb.ref('gender_configs').child(name).remove();
   }
 
-  Stream<Map<String, String>> getGenderConfigs() {
-    return _rtdb.ref('gender_configs').onValue.map((event) {
-      final data = event.snapshot.value;
-      if (data is! Map) return {};
-
-      final Map<String, String> result = {};
-      data.forEach((key, value) {
-        if (value is Map) {
-          final color = value['color'];
-          if (color != null) {
-            result[key.toString()] = color.toString();
+  Stream<Map<String, String>> getGenderConfigs() async* {
+    yield {
+      'Girls Special': '#E91E63',
+      'Boys Special': '#2196F3',
+      'Combined': '#9C27B0',
+    };
+    try {
+      await for (final event in _rtdb.ref('gender_configs').onValue) {
+        final data = event.snapshot.value;
+        if (data is Map) {
+          final Map<String, String> result = {};
+          data.forEach((key, value) {
+            if (value is Map) {
+              final color = value['color'];
+              if (color != null) {
+                result[key.toString()] = color.toString();
+              }
+            }
+          });
+          if (result.isNotEmpty) {
+            yield result;
           }
         }
-      });
-      return result;
-    });
+      }
+    } catch (e) {
+      print("FirebaseService: Error listening to gender configs: $e. Using defaults.");
+    }
   }
 
   // Support Tickets
@@ -995,5 +949,110 @@ class FirebaseService {
               .map((doc) => AuditLogModel.fromFirestore(doc))
               .toList();
         });
+  }
+
+  // ─── Safety Configuration (Firestore) ───────────────────────────────────
+  Stream<Map<String, dynamic>> getSafetyConfig() {
+    return _db
+        .collection('app_settings')
+        .doc('safety')
+        .snapshots()
+        .map((doc) {
+          if (!doc.exists) {
+            return {
+              'speedLimit': 60.0,
+              'geofencingEnabled': true,
+              'overspeedingEnabled': true,
+              'geofenceRadiusMeters': 200,
+            };
+          }
+          final data = doc.data()!;
+          return {
+            'speedLimit': (data['speedLimit'] ?? 60).toDouble(),
+            'geofencingEnabled': data['geofencingEnabled'] ?? true,
+            'overspeedingEnabled': data['overspeedingEnabled'] ?? true,
+            'geofenceRadiusMeters': data['geofenceRadiusMeters'] ?? 200,
+          };
+        });
+  }
+
+  Future<void> updateSafetyConfig(Map<String, dynamic> config) async {
+    await _db.collection('app_settings').doc('safety').set({
+      ...config,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    await logActivity(
+      action: 'Updated Safety Config',
+      target: 'Speed Limit: ${config['speedLimit']} km/h',
+    );
+  }
+
+  // ─── Real-Time Trip Analytics Stream (RTDB) ─────────────────────────────
+  /// Returns aggregated analytics computed from driver_trips RTDB node.
+  Stream<Map<String, dynamic>> getTripAnalyticsStream() {
+    return _rtdb.ref('driver_trips').onValue.map((event) {
+      final data = event.snapshot.value;
+      if (data is! Map) {
+        return <String, dynamic>{
+          'totalTrips': 0,
+          'completedTrips': 0,
+          'successRate': 0.0,
+          'peakHour': 0,
+          'hourlyBuckets': List<int>.filled(24, 0),
+        };
+      }
+
+      final List<Map<String, dynamic>> trips = [];
+      data.forEach((driverId, driverTrips) {
+        if (driverTrips is Map) {
+          driverTrips.forEach((tripId, tripData) {
+            if (tripData is Map) {
+              final t = Map<String, dynamic>.from(tripData);
+              t['driverId'] = driverId.toString();
+              trips.add(t);
+            }
+          });
+        }
+      });
+
+      int totalTrips = trips.length;
+      int completedTrips =
+          trips.where((t) => (t['status'] ?? '') == 'completed').length;
+      double successRate =
+          totalTrips > 0 ? (completedTrips / totalTrips) * 100 : 0.0;
+
+      final List<int> hourlyBuckets = List<int>.filled(24, 0);
+      for (var trip in trips) {
+        final startTimeVal = trip['startTime'];
+        if (startTimeVal != null) {
+          final dt = DateTime.fromMillisecondsSinceEpoch(startTimeVal);
+          hourlyBuckets[dt.hour]++;
+        }
+      }
+
+      int peakHour = 0;
+      for (int i = 1; i < 24; i++) {
+        if (hourlyBuckets[i] > hourlyBuckets[peakHour]) peakHour = i;
+      }
+
+      return <String, dynamic>{
+        'totalTrips': totalTrips,
+        'completedTrips': completedTrips,
+        'successRate': successRate,
+        'peakHour': peakHour,
+        'hourlyBuckets': hourlyBuckets,
+      };
+    });
+  }
+
+  // ─── Buses Stream (Firestore) ─────────────────────────────────────────────
+  Stream<List<Map<String, dynamic>>> getBusesStream() {
+    return _db.collection('buses').snapshots().map((snapshot) {
+      return snapshot.docs.map((doc) {
+        final data = doc.data();
+        data['id'] = doc.id;
+        return data;
+      }).toList();
+    });
   }
 }

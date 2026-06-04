@@ -1,9 +1,9 @@
-import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -31,6 +31,11 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen> with SingleTi
   void initState() {
     super.initState();
     _tabController = TabController(length: 5, vsync: this);
+    _tabController.addListener(() {
+      if (mounted) {
+        setState(() {});
+      }
+    });
   }
 
   @override
@@ -45,73 +50,92 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen> with SingleTi
     
     return FadeInSlide(
       duration: const Duration(milliseconds: 600),
-      child: Container(
-        padding: EdgeInsets.all(isMobile ? 16.0 : 32.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader(context),
-            const SizedBox(height: 24),
-            _buildTabBar(),
-            const SizedBox(height: 24),
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: const [
-                  HubsManagerSection(),
-                  RouteDefinitionSection(),
-                  StopsManagerSection(),
-                  PolylineUploaderSection(),
-                  MapPreviewSection(),
-                ],
+      child: SingleChildScrollView(
+        child: Container(
+          padding: EdgeInsets.all(isMobile ? 16.0 : 32.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+
+              _buildTabBar(),
+              const SizedBox(height: 24),
+              Focus(
+                autofocus: true,
+                onKeyEvent: (node, event) {
+                  if (event is KeyDownEvent) {
+                    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+                      if (_tabController.index < _tabController.length - 1) {
+                        _tabController.animateTo(_tabController.index + 1);
+                        return KeyEventResult.handled;
+                      }
+                    } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+                      if (_tabController.index > 0) {
+                        _tabController.animateTo(_tabController.index - 1);
+                        return KeyEventResult.handled;
+                      }
+                    }
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragEnd: (details) {
+                    if (details.primaryVelocity != null) {
+                      if (details.primaryVelocity! < -300) {
+                        if (_tabController.index < _tabController.length - 1) {
+                          _tabController.animateTo(_tabController.index + 1);
+                        }
+                      } else if (details.primaryVelocity! > 300) {
+                        if (_tabController.index > 0) {
+                          _tabController.animateTo(_tabController.index - 1);
+                        }
+                      }
+                    }
+                  },
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    transitionBuilder: (Widget child, Animation<double> animation) {
+                      return FadeTransition(
+                        opacity: animation,
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0.05, 0.0),
+                            end: Offset.zero,
+                          ).animate(animation),
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: Builder(
+                      key: ValueKey<int>(_tabController.index),
+                      builder: (context) {
+                        switch (_tabController.index) {
+                          case 0:
+                            return const HubsManagerSection();
+                          case 1:
+                            return const RouteDefinitionSection();
+                          case 2:
+                            return const StopsManagerSection();
+                          case 3:
+                            return const PolylineUploaderSection();
+                          case 4:
+                            return const MapPreviewSection();
+                          default:
+                            return const SizedBox.shrink();
+                        }
+                      },
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
-    final isMobile = AppResponsiveUtil.isMobile(context);
-    return FadeInSlide(
-      direction: FadeInDirection.leftToRight,
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppColors.primaryNavy.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(Icons.map_rounded, color: AppColors.primaryNavy, size: isMobile ? 20 : 28),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Route & Map',
-                  style: GoogleFonts.poppins(
-                    fontSize: isMobile ? 20 : 28,
-                    fontWeight: FontWeight.w900,
-                    color: AppColors.textDark,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-                if (!isMobile)
-                  Text(
-                    'Configure campuses, define routes, and manage map paths.',
-                    style: GoogleFonts.poppins(color: AppColors.textSecondary.withValues(alpha: 0.7), fontSize: 13),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+
 
   Widget _buildTabBar() {
     return FadeInSlide(
@@ -123,26 +147,28 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen> with SingleTi
           color: AppColors.backgroundLight,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: TabBar(
-          controller: _tabController,
-          isScrollable: AppResponsiveUtil.isMobile(context),
-          tabAlignment: AppResponsiveUtil.isMobile(context) ? TabAlignment.start : null,
-          labelColor: Colors.white,
-          unselectedLabelColor: AppColors.textSecondary,
-          indicator: BoxDecoration(
-            color: AppColors.primaryNavy,
-            borderRadius: BorderRadius.circular(10),
+        child: ScrollConfiguration(
+          // Disable default web scrollbars on the tab bar itself
+          behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+          child: TabBar(
+            controller: _tabController,
+            labelColor: Colors.white,
+            unselectedLabelColor: AppColors.textSecondary,
+            indicator: BoxDecoration(
+              color: AppColors.primaryNavy,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            indicatorSize: TabBarIndicatorSize.tab,
+            dividerColor: Colors.transparent,
+            labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 13),
+            tabs: const [
+              Tab(text: 'Hubs'),
+              Tab(text: 'Routes'),
+              Tab(text: 'Stops'),
+              Tab(text: 'Paths'),
+              Tab(text: 'Map Preview'),
+            ],
           ),
-          indicatorSize: TabBarIndicatorSize.tab,
-          dividerColor: Colors.transparent,
-          labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 13),
-          tabs: const [
-            Tab(text: 'Hubs'),
-            Tab(text: 'Routes'),
-            Tab(text: 'Stops'),
-            Tab(text: 'Paths'),
-            Tab(text: 'Map Preview'),
-          ],
         ),
       ),
     );
@@ -159,25 +185,23 @@ class HubsManagerSection extends StatelessWidget {
     final firebaseService = context.read<FirebaseService>();
     final isDesktop = AppResponsiveUtil.isDesktop(context);
 
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 24),
-        child: Flex(
-          direction: isDesktop ? Axis.horizontal : Axis.vertical,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: isDesktop ? 380 : double.infinity,
-              child: _buildFormPanel(viewModel),
-            ),
-            if (isDesktop) const SizedBox(width: 24),
-            if (!isDesktop) const SizedBox(height: 24),
-            if (isDesktop)
-              Expanded(child: _buildListPanel(firebaseService, viewModel))
-            else
-              _buildListPanel(firebaseService, viewModel),
-          ],
-        ),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Flex(
+        direction: isDesktop ? Axis.horizontal : Axis.vertical,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: isDesktop ? 380 : double.infinity,
+            child: _buildFormPanel(viewModel),
+          ),
+          if (isDesktop) const SizedBox(width: 24),
+          if (!isDesktop) const SizedBox(height: 24),
+          if (isDesktop)
+            Expanded(child: _buildListPanel(firebaseService, viewModel))
+          else
+            _buildListPanel(firebaseService, viewModel),
+        ],
       ),
     );
   }
@@ -195,7 +219,7 @@ class HubsManagerSection extends StatelessWidget {
         children: [
           Text(
             viewModel.editingHubName != null ? 'Edit Hub' : 'Create Hub',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textDark),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textDark),
           ),
           const SizedBox(height: 24),
           _buildFieldLabel('Location Name'),
@@ -328,7 +352,7 @@ class _HubCardState extends State<_HubCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(widget.hub.name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: _isHovered ? AppColors.primaryNavy : AppColors.textDark)),
-                  Text('${widget.hub.latitude}, ${widget.hub.longitude}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+                  Text('${widget.hub.latitude}, ${widget.hub.longitude}', style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
                 ],
               ),
             ),
@@ -359,25 +383,23 @@ class RouteDefinitionSection extends StatelessWidget {
       builder: (context, hubSnapshot) {
         final hubs = hubSnapshot.data ?? [];
         
-        return SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 24),
-            child: Flex(
-              direction: isDesktop ? Axis.horizontal : Axis.vertical,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: isDesktop ? 380 : double.infinity,
-                  child: _buildRouteForm(viewModel, hubs),
-                ),
-                if (isDesktop) const SizedBox(width: 24),
-                if (!isDesktop) const SizedBox(height: 24),
-                if (isDesktop)
-                  Expanded(child: _buildRouteList(viewModel, firebaseService))
-                else
-                  _buildRouteList(viewModel, firebaseService),
-              ],
-            ),
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 24),
+          child: Flex(
+            direction: isDesktop ? Axis.horizontal : Axis.vertical,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: isDesktop ? 380 : double.infinity,
+                child: _buildRouteForm(viewModel, hubs),
+              ),
+              if (isDesktop) const SizedBox(width: 24),
+              if (!isDesktop) const SizedBox(height: 24),
+              if (isDesktop)
+                Expanded(child: _buildRouteList(viewModel, firebaseService))
+              else
+                _buildRouteList(viewModel, firebaseService),
+            ],
           ),
         );
       },
@@ -444,7 +466,20 @@ class RouteDefinitionSection extends StatelessWidget {
             stream: firebaseService.getBusSchedules(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) return const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator()));
-              final schedules = snapshot.data ?? [];
+              final allSchedules = snapshot.data ?? [];
+              // Show only master route templates (no date, no operatingDays, no specific departure time)
+              final schedules = allSchedules.where((s) {
+                final hasNoDate = s.date == null || s.date!.isEmpty;
+                final hasNoOperatingDays = s.operatingDays == null || s.operatingDays!.isEmpty;
+                final hasNoTime = s.departureTime == null ||
+                    s.departureTime!.isEmpty ||
+                    s.departureTime == 'TBA' ||
+                    s.departureTime == 'Live';
+                return hasNoDate && hasNoOperatingDays && hasNoTime;
+              }).fold<List<BusSchedule>>([], (acc, s) {
+                if (!acc.any((r) => r.route == s.route)) acc.add(s);
+                return acc;
+              });
               if (schedules.isEmpty) return _buildEmptyState('No routes defined.');
 
               return ListView.separated(
@@ -502,7 +537,7 @@ class _RouteCardState extends State<_RouteCard> {
                   Row(
                     children: [
                       Text(widget.route.from, style: const TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.w600)),
-                      const Icon(Icons.arrow_right_alt, size: 16, color: AppColors.textSecondary),
+                      Icon(Icons.arrow_right_alt, size: 16, color: AppColors.textSecondary),
                       Text(widget.route.to, style: const TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.w600)),
                     ],
                   ),
@@ -531,30 +566,28 @@ class PolylineUploaderSection extends StatelessWidget {
     final firebaseService = context.read<FirebaseService>();
     final isDesktop = AppResponsiveUtil.isDesktop(context);
 
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 24),
-        child: Flex(
-          direction: isDesktop ? Axis.horizontal : Axis.vertical,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: isDesktop ? 380 : double.infinity,
-              child: _buildPolylineForm(viewModel, firebaseService),
-            ),
-            if (isDesktop) const SizedBox(width: 24),
-            if (!isDesktop) const SizedBox(height: 24),
-            if (isDesktop)
-              Expanded(child: _buildPolylineStatus(firebaseService))
-            else
-              _buildPolylineStatus(firebaseService),
-          ],
-        ),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Flex(
+        direction: isDesktop ? Axis.horizontal : Axis.vertical,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: isDesktop ? 380 : double.infinity,
+            child: _buildPolylineForm(context, viewModel, firebaseService),
+          ),
+          if (isDesktop) const SizedBox(width: 24),
+          if (!isDesktop) const SizedBox(height: 24),
+          if (isDesktop)
+            Expanded(child: _buildPolylineStatus(firebaseService))
+          else
+            _buildPolylineStatus(firebaseService),
+        ],
       ),
     );
   }
 
-  Widget _buildPolylineForm(RoutePlanningViewModel viewModel, FirebaseService firebaseService) {
+  Widget _buildPolylineForm(BuildContext context, RoutePlanningViewModel viewModel, FirebaseService firebaseService) {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -571,10 +604,20 @@ class PolylineUploaderSection extends StatelessWidget {
           StreamBuilder<List<BusSchedule>>(
             stream: firebaseService.getBusSchedules(),
             builder: (context, snapshot) {
-              final routes = snapshot.data ?? [];
+              final allRoutes = snapshot.data ?? [];
+              // Only show master route templates
+              final masterRouteNames = allRoutes.where((s) {
+                final hasNoDate = s.date == null || s.date!.isEmpty;
+                final hasNoOperatingDays = s.operatingDays == null || s.operatingDays!.isEmpty;
+                final hasNoTime = s.departureTime == null ||
+                    s.departureTime!.isEmpty ||
+                    s.departureTime == 'TBA' ||
+                    s.departureTime == 'Live';
+                return hasNoDate && hasNoOperatingDays && hasNoTime;
+              }).map((s) => s.route).toSet().toList();
               return _buildModernDropdown(
-                viewModel.selectedRouteForPolyline, 
-                routes.map((d) => d.route).toList(), 
+                viewModel.selectedRouteForPolyline,
+                masterRouteNames,
                 'Route', Icons.alt_route_rounded, AppColors.primaryNavy, (v) => viewModel.setSelectedRouteForPolyline(v)
               );
             },
@@ -597,7 +640,30 @@ class PolylineUploaderSection extends StatelessWidget {
             width: double.infinity,
             height: 50,
             child: ElevatedButton.icon(
-              onPressed: viewModel.isPolylineSaving ? null : () => viewModel.uploadPolyline(),
+              onPressed: viewModel.isPolylineSaving
+                  ? null
+                  : () async {
+                      try {
+                        await viewModel.uploadPolyline();
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Path synchronized successfully!'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        }
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Failed to sync path: ${e.toString().replaceAll("Exception: ", "")}'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      }
+                    },
               icon: const Icon(Icons.sync_rounded),
               label: const Text('Sync Path', style: TextStyle(fontWeight: FontWeight.bold)),
               style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryNavy, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
@@ -630,7 +696,20 @@ class PolylineUploaderSection extends StatelessWidget {
               return StreamBuilder<List<BusSchedule>>(
                 stream: firebaseService.getBusSchedules(),
                 builder: (context, routeSnapshot) {
-                  final routes = routeSnapshot.data ?? [];
+                  final allRoutes = routeSnapshot.data ?? [];
+                  // Only show master route templates
+                  final routes = allRoutes.where((s) {
+                    final hasNoDate = s.date == null || s.date!.isEmpty;
+                    final hasNoOperatingDays = s.operatingDays == null || s.operatingDays!.isEmpty;
+                    final hasNoTime = s.departureTime == null ||
+                        s.departureTime!.isEmpty ||
+                        s.departureTime == 'TBA' ||
+                        s.departureTime == 'Live';
+                    return hasNoDate && hasNoOperatingDays && hasNoTime;
+                  }).fold<List<BusSchedule>>([], (acc, s) {
+                    if (!acc.any((r) => r.route == s.route)) acc.add(s);
+                    return acc;
+                  });
                   if (routes.isEmpty) return _buildEmptyState('No routes.');
 
                   return ListView.separated(
@@ -760,7 +839,7 @@ class _MapPreviewSectionState extends State<MapPreviewSection> {
                               color: AppColors.primaryNavy.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: const Icon(Icons.map_rounded, color: AppColors.primaryNavy, size: 18),
+                            child: Icon(Icons.map_rounded, color: AppColors.primaryNavy, size: 18),
                           ),
                           const SizedBox(width: 10),
                           const Expanded(
@@ -776,8 +855,17 @@ class _MapPreviewSectionState extends State<MapPreviewSection> {
                       StreamBuilder<List<BusSchedule>>(
                         stream: firebaseService.getBusSchedules(),
                         builder: (context, snapshot) {
-                          final routes = snapshot.data ?? [];
-                          final uniqueRouteNames = routes.map((r) => r.route).toSet().toList();
+                          final allRoutes = snapshot.data ?? [];
+                          // Only show master route templates
+                          final uniqueRouteNames = allRoutes.where((s) {
+                            final hasNoDate = s.date == null || s.date!.isEmpty;
+                            final hasNoOperatingDays = s.operatingDays == null || s.operatingDays!.isEmpty;
+                            final hasNoTime = s.departureTime == null ||
+                                s.departureTime!.isEmpty ||
+                                s.departureTime == 'TBA' ||
+                                s.departureTime == 'Live';
+                            return hasNoDate && hasNoOperatingDays && hasNoTime;
+                          }).map((r) => r.route).toSet().toList();
 
                           if (_selectedRoute != null && !uniqueRouteNames.contains(_selectedRoute)) {
                             SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -824,7 +912,7 @@ class _MapPreviewSectionState extends State<MapPreviewSection> {
                           color: AppColors.primaryNavy.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Icon(Icons.map_rounded, color: AppColors.primaryNavy, size: 20),
+                        child: Icon(Icons.map_rounded, color: AppColors.primaryNavy, size: 20),
                       ),
                       const SizedBox(width: 16),
                       const Text('Route Map Preview', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
@@ -833,8 +921,17 @@ class _MapPreviewSectionState extends State<MapPreviewSection> {
                       StreamBuilder<List<BusSchedule>>(
                         stream: firebaseService.getBusSchedules(),
                         builder: (context, snapshot) {
-                          final routes = snapshot.data ?? [];
-                          final uniqueRouteNames = routes.map((r) => r.route).toSet().toList();
+                          final allRoutes = snapshot.data ?? [];
+                          // Only show master route templates
+                          final uniqueRouteNames = allRoutes.where((s) {
+                            final hasNoDate = s.date == null || s.date!.isEmpty;
+                            final hasNoOperatingDays = s.operatingDays == null || s.operatingDays!.isEmpty;
+                            final hasNoTime = s.departureTime == null ||
+                                s.departureTime!.isEmpty ||
+                                s.departureTime == 'TBA' ||
+                                s.departureTime == 'Live';
+                            return hasNoDate && hasNoOperatingDays && hasNoTime;
+                          }).map((r) => r.route).toSet().toList();
 
                           if (_selectedRoute != null && !uniqueRouteNames.contains(_selectedRoute)) {
                             SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -875,7 +972,8 @@ class _MapPreviewSectionState extends State<MapPreviewSection> {
           const SizedBox(height: 16),
 
           // Map canvas
-          Expanded(
+          SizedBox(
+            height: 500,
             child: Container(
               decoration: BoxDecoration(
                 color: Colors.white,
@@ -884,7 +982,7 @@ class _MapPreviewSectionState extends State<MapPreviewSection> {
               ),
               clipBehavior: Clip.antiAlias,
               child: _selectedRoute == null
-                  ? const Center(
+                  ? Center(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -948,7 +1046,7 @@ class _MapPreviewSectionState extends State<MapPreviewSection> {
                                 }
 
                                 if (hubs.isEmpty && routeStops.isEmpty && polylineLatLngs.isEmpty) {
-                                  return const Center(
+                                  return Center(
                                     child: Column(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
@@ -1460,25 +1558,23 @@ class StopsManagerSection extends StatelessWidget {
     final firebaseService = context.read<FirebaseService>();
     final isDesktop = AppResponsiveUtil.isDesktop(context);
 
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 24),
-        child: Flex(
-          direction: isDesktop ? Axis.horizontal : Axis.vertical,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: isDesktop ? 380 : double.infinity,
-              child: _buildStopForm(viewModel, firebaseService),
-            ),
-            if (isDesktop) const SizedBox(width: 24),
-            if (!isDesktop) const SizedBox(height: 24),
-            if (isDesktop)
-              Expanded(child: _buildStopList(firebaseService, viewModel))
-            else
-              _buildStopList(firebaseService, viewModel),
-          ],
-        ),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Flex(
+        direction: isDesktop ? Axis.horizontal : Axis.vertical,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: isDesktop ? 380 : double.infinity,
+            child: _buildStopForm(viewModel, firebaseService),
+          ),
+          if (isDesktop) const SizedBox(width: 24),
+          if (!isDesktop) const SizedBox(height: 24),
+          if (isDesktop)
+            Expanded(child: _buildStopList(firebaseService, viewModel))
+          else
+            _buildStopList(firebaseService, viewModel),
+        ],
       ),
     );
   }
@@ -1506,10 +1602,20 @@ class StopsManagerSection extends StatelessWidget {
           StreamBuilder<List<BusSchedule>>(
             stream: firebaseService.getBusSchedules(),
             builder: (context, snapshot) {
-              final routes = snapshot.data ?? [];
+              final allRoutes = snapshot.data ?? [];
+              // Only show master route templates
+              final masterRouteNames = allRoutes.where((s) {
+                final hasNoDate = s.date == null || s.date!.isEmpty;
+                final hasNoOperatingDays = s.operatingDays == null || s.operatingDays!.isEmpty;
+                final hasNoTime = s.departureTime == null ||
+                    s.departureTime!.isEmpty ||
+                    s.departureTime == 'TBA' ||
+                    s.departureTime == 'Live';
+                return hasNoDate && hasNoOperatingDays && hasNoTime;
+              }).map((s) => s.route).toSet().toList();
               return _buildModernDropdown(
-                viewModel.selectedRouteForStop, 
-                routes.map((d) => d.route).toList(), 
+                viewModel.selectedRouteForStop,
+                masterRouteNames,
                 'Route', Icons.alt_route_rounded, AppColors.primaryNavy, (v) => viewModel.setSelectedRouteForStop(v)
               );
             },
@@ -1663,8 +1769,8 @@ class _StopCardState extends State<_StopCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(widget.stop.name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: _isHovered ? AppColors.primaryNavy : AppColors.textDark)),
-                  Text('Route: ${widget.stop.route}', style: const TextStyle(color: AppColors.primaryNavy, fontSize: 11, fontWeight: FontWeight.w600)),
-                  Text('${widget.stop.latitude}, ${widget.stop.longitude}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 10)),
+                  Text('Route: ${widget.stop.route}', style: TextStyle(color: AppColors.primaryNavy, fontSize: 11, fontWeight: FontWeight.w600)),
+                  Text('${widget.stop.latitude}, ${widget.stop.longitude}', style: TextStyle(color: AppColors.textSecondary, fontSize: 10)),
                 ],
               ),
             ),
@@ -1685,7 +1791,7 @@ class _StopCardState extends State<_StopCard> {
 Widget _buildFieldLabel(String label) {
   return Padding(
     padding: const EdgeInsets.only(bottom: 6.0),
-    child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textDark)),
+    child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textDark)),
   );
 }
 
@@ -1727,10 +1833,10 @@ Widget _buildModernDropdown(String? value, List<String> items, String hint, Icon
           children: [
             Icon(icon, color: iconColor, size: 18),
             const SizedBox(width: 10),
-            Text(hint, style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+            Text(hint, style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
           ],
         ),
-        icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary, size: 18),
+        icon: Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary, size: 18),
         items: uniqueItems.map((t) => DropdownMenuItem(value: t, child: Text(t, style: const TextStyle(fontSize: 13)))).toList(),
         onChanged: onChanged,
       ),
@@ -1756,7 +1862,7 @@ Widget _buildActionMenu(BuildContext context, {required VoidCallback onEdit, req
         );
       }
     },
-    icon: const Icon(Icons.more_vert, size: 18, color: AppColors.textSecondary),
+    icon: Icon(Icons.more_vert, size: 18, color: AppColors.textSecondary),
     itemBuilder: (context) => [
       const PopupMenuItem(value: 'edit', child: Text('Edit')),
       const PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: Colors.red))),
@@ -1768,7 +1874,7 @@ Widget _buildEmptyState(String msg) {
   return Center(
     child: Padding(
       padding: const EdgeInsets.all(32),
-      child: Text(msg, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+      child: Text(msg, style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
     ),
   );
 }

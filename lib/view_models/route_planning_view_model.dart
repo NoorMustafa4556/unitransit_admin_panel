@@ -226,18 +226,68 @@ class RoutePlanningViewModel extends ChangeNotifier {
   }
 
   Future<void> uploadPolyline() async {
-    if (_selectedRouteForPolyline != null && jsonController.text.isNotEmpty) {
-      _isPolylineSaving = true;
-      notifyListeners();
+    if (_selectedRouteForPolyline == null || jsonController.text.trim().isEmpty) {
+      return;
+    }
 
+    _isPolylineSaving = true;
+    notifyListeners();
+
+    try {
+      final input = jsonController.text.trim();
+      List<Map<String, double>> parsedCoords = [];
+
+      // 1. Try standard JSON first
       try {
-        final List<dynamic> coordinates = jsonDecode(jsonController.text);
-        await _firebaseService.savePolyline(_selectedRouteForPolyline!, coordinates);
-        jsonController.clear();
-      } finally {
-        _isPolylineSaving = false;
-        notifyListeners();
+        final decoded = jsonDecode(input);
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is Map) {
+              final lat = double.tryParse(item['lat']?.toString() ?? '');
+              final lng = double.tryParse(item['lng']?.toString() ?? '');
+              if (lat != null && lng != null) {
+                parsedCoords.add({'lat': lat, 'lng': lng});
+              }
+            } else if (item is List && item.length >= 2) {
+              final lat = double.tryParse(item[0]?.toString() ?? '');
+              final lng = double.tryParse(item[1]?.toString() ?? '');
+              if (lat != null && lng != null) {
+                parsedCoords.add({'lat': lat, 'lng': lng});
+              }
+            }
+          }
+        }
+      } catch (_) {
+        // Not valid JSON, proceed to regex parser
       }
+
+      // 2. If JSON parsing didn't find any coordinates, try Regex parsing (e.g. LatLng(29.39, 71.69) or raw pairs)
+      if (parsedCoords.isEmpty) {
+        // Regex to match "LatLng(29.39, 71.69)" or just numbers: "29.39, 71.69"
+        final latLngRegex = RegExp(r'(?:LatLng\s*\(\s*)?([0-9.-]+)\s*,\s*([0-9.-]+)\s*\)?');
+        final matches = latLngRegex.allMatches(input);
+        
+        for (final match in matches) {
+          final lat = double.tryParse(match.group(1) ?? '');
+          final lng = double.tryParse(match.group(2) ?? '');
+          if (lat != null && lng != null) {
+            parsedCoords.add({'lat': lat, 'lng': lng});
+          }
+        }
+      }
+
+      if (parsedCoords.isEmpty) {
+        throw const FormatException("No coordinates could be parsed. Please check the format.");
+      }
+
+      await _firebaseService.savePolyline(_selectedRouteForPolyline!, parsedCoords);
+      jsonController.clear();
+    } catch (e) {
+      debugPrint("Error saving polyline: $e");
+      rethrow;
+    } finally {
+      _isPolylineSaving = false;
+      notifyListeners();
     }
   }
 

@@ -57,6 +57,18 @@ class DashboardViewModel extends ChangeNotifier {
   int totalDrivers = 0;
   int totalAdmins = 0; // Added for Super Admin dashboard
   int activeTrips = 42;
+
+  int? _parseTimestamp(dynamic val, [String? tripId]) {
+    if (val is int) return val;
+    if (val is num) return val.toInt();
+    if (val is String) {
+      return int.tryParse(val);
+    }
+    if (tripId != null) {
+      return int.tryParse(tripId);
+    }
+    return null;
+  }
   int pendingAlerts = 0;
   double totalRevenue = 12450.0;
 
@@ -212,10 +224,10 @@ class DashboardViewModel extends ChangeNotifier {
       final busNumber = trip['busNumber'] ?? 'N/A';
       final from = trip['from'] ?? 'Unknown';
       final to = trip['to'] ?? 'Unknown';
-      final startTimeVal = trip['startTime'];
+      final parsedStartTime = _parseTimestamp(trip['startTime'], trip['tripId']);
 
-      if (startTimeVal != null) {
-        final timestamp = DateTime.fromMillisecondsSinceEpoch(startTimeVal);
+      if (parsedStartTime != null) {
+        final timestamp = DateTime.fromMillisecondsSinceEpoch(parsedStartTime);
         if (status == 'active') {
           activities.add({
             'title': 'Bus #$busNumber started route',
@@ -225,11 +237,8 @@ class DashboardViewModel extends ChangeNotifier {
             'color': Colors.blue,
           });
         } else {
-          final endTimeVal = trip['endTime'];
-          final endTimestamp =
-              endTimeVal != null
-                  ? DateTime.fromMillisecondsSinceEpoch(endTimeVal)
-                  : timestamp;
+          final parsedEndTime = _parseTimestamp(trip['endTime']) ?? parsedStartTime;
+          final endTimestamp = DateTime.fromMillisecondsSinceEpoch(parsedEndTime);
           activities.add({
             'title': 'Bus #$busNumber arrived',
             'subtitle': 'Completed route: $from ➔ $to',
@@ -260,9 +269,10 @@ class DashboardViewModel extends ChangeNotifier {
       final status = alert['status'] ?? 'active';
       final message = alert['message'] ?? 'Emergency SOS Alert';
       final timeVal = alert['timestamp'];
+      final parsedAlertTime = _parseTimestamp(timeVal);
 
-      if (timeVal != null) {
-        final timestamp = DateTime.fromMillisecondsSinceEpoch(timeVal);
+      if (parsedAlertTime != null) {
+        final timestamp = DateTime.fromMillisecondsSinceEpoch(parsedAlertTime);
         if (status == 'active') {
           activities.add({
             'title': '🚨 SOS Alert Active!',
@@ -273,10 +283,8 @@ class DashboardViewModel extends ChangeNotifier {
           });
         } else {
           final resolvedAtVal = alert['resolvedAt'];
-          final resolvedTimestamp =
-              resolvedAtVal != null
-                  ? DateTime.fromMillisecondsSinceEpoch(resolvedAtVal)
-                  : timestamp;
+          final parsedResolvedTime = _parseTimestamp(resolvedAtVal) ?? parsedAlertTime;
+          final resolvedTimestamp = DateTime.fromMillisecondsSinceEpoch(parsedResolvedTime);
           activities.add({
             'title': '🟢 SOS Alert Resolved',
             'subtitle': 'Notes: ${alert['resolutionNotes'] ?? ''}',
@@ -324,9 +332,10 @@ class DashboardViewModel extends ChangeNotifier {
     for (var a in activeSOS) {
       final String alertId = a['id'] ?? '';
       final timeVal = a['timestamp'];
+      final parsedAlertTime = _parseTimestamp(timeVal);
       final timestamp =
-          timeVal != null
-              ? DateTime.fromMillisecondsSinceEpoch(timeVal)
+          parsedAlertTime != null
+              ? DateTime.fromMillisecondsSinceEpoch(parsedAlertTime)
               : DateTime.now();
       final bool isRead =
           (a['adminRead'] == true) ||
@@ -392,8 +401,9 @@ class DashboardViewModel extends ChangeNotifier {
       final startOfDay = DateTime(now.year, now.month, now.day);
       for (var trip in _allTrips) {
         final startTimeVal = trip['startTime'];
-        if (startTimeVal == null) continue;
-        final tripDate = DateTime.fromMillisecondsSinceEpoch(startTimeVal);
+        final parsedTime = _parseTimestamp(startTimeVal, trip['tripId']);
+        if (parsedTime == null) continue;
+        final tripDate = DateTime.fromMillisecondsSinceEpoch(parsedTime);
         if (tripDate.year == now.year &&
             tripDate.month == now.month &&
             tripDate.day == now.day) {
@@ -406,8 +416,9 @@ class DashboardViewModel extends ChangeNotifier {
       final List<double> daily = List.filled(30, 0.0);
       for (var trip in _allTrips) {
         final startTimeVal = trip['startTime'];
-        if (startTimeVal == null) continue;
-        final tripDate = DateTime.fromMillisecondsSinceEpoch(startTimeVal);
+        final parsedTime = _parseTimestamp(startTimeVal, trip['tripId']);
+        if (parsedTime == null) continue;
+        final tripDate = DateTime.fromMillisecondsSinceEpoch(parsedTime);
         final diff = now.difference(tripDate).inDays;
         if (diff >= 0 && diff < 30) {
           daily[29 - diff] += 1.0;
@@ -418,8 +429,9 @@ class DashboardViewModel extends ChangeNotifier {
       final List<double> monthly = List.filled(12, 0.0);
       for (var trip in _allTrips) {
         final startTimeVal = trip['startTime'];
-        if (startTimeVal == null) continue;
-        final tripDate = DateTime.fromMillisecondsSinceEpoch(startTimeVal);
+        final parsedTime = _parseTimestamp(startTimeVal, trip['tripId']);
+        if (parsedTime == null) continue;
+        final tripDate = DateTime.fromMillisecondsSinceEpoch(parsedTime);
         if (tripDate.year == now.year) {
           monthly[tripDate.month - 1] += 1.0;
         }
@@ -434,8 +446,9 @@ class DashboardViewModel extends ChangeNotifier {
 
       for (var trip in _allTrips) {
         final startTimeVal = trip['startTime'];
-        if (startTimeVal == null) continue;
-        final tripDate = DateTime.fromMillisecondsSinceEpoch(startTimeVal);
+        final parsedTime = _parseTimestamp(startTimeVal, trip['tripId']);
+        if (parsedTime == null) continue;
+        final tripDate = DateTime.fromMillisecondsSinceEpoch(parsedTime);
 
         if ((tripDate.isAfter(startOfWeek) ||
                 tripDate.isAtSameMomentAs(startOfWeek)) &&

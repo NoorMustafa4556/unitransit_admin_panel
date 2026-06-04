@@ -10,6 +10,18 @@ import 'package:unitransit_admin/core/utils/animations.dart';
 class TripHistoryScreen extends StatefulWidget {
   const TripHistoryScreen({super.key});
 
+  static int? parseTimestamp(dynamic val, [String? tripId]) {
+    if (val is int) return val;
+    if (val is num) return val.toInt();
+    if (val is String) {
+      return int.tryParse(val);
+    }
+    if (tripId != null) {
+      return int.tryParse(tripId);
+    }
+    return null;
+  }
+
   @override
   State<TripHistoryScreen> createState() => _TripHistoryScreenState();
 }
@@ -50,38 +62,56 @@ class _TripHistoryScreenState extends State<TripHistoryScreen> {
 
     return FadeInSlide(
       duration: const Duration(milliseconds: 600),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: EdgeInsets.all(AppResponsiveUtil.isMobile(context) ? 16 : 32),
-            child: _buildHeader(context),
-          ),
-          Expanded(
-            child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: firebaseService.getTripHistoryStream(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragEnd: (details) {
+          if (details.primaryVelocity != null) {
+            final tabs = ['All', 'Active', 'Completed'];
+            final currentIndex = tabs.indexOf(_selectedTabNotifier.value);
+            if (details.primaryVelocity! < -300) {
+              // swipe left -> next tab
+              if (currentIndex < tabs.length - 1) {
+                _selectedTabNotifier.value = tabs[currentIndex + 1];
+              }
+            } else if (details.primaryVelocity! > 300) {
+              // swipe right -> prev tab
+              if (currentIndex > 0) {
+                _selectedTabNotifier.value = tabs[currentIndex - 1];
+              }
+            }
+          }
+        },
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 16),
+              StreamBuilder<List<Map<String, dynamic>>>(
+                stream: firebaseService.getTripHistoryStream(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: Padding(
+                      padding: EdgeInsets.all(40.0),
+                      child: CircularProgressIndicator(),
+                    ));
+                  }
 
-                final allTrips = snapshot.data ?? [];
-                final activeTripsCount = allTrips.where((t) => t['status'] == 'active').length;
-                final completedTripsCount = allTrips.where((t) => t['status'] == 'completed').length;
+                  final allTrips = snapshot.data ?? [];
+                  final activeTripsCount = allTrips.where((t) => t['status'] == 'active').length;
+                  final completedTripsCount = allTrips.where((t) => t['status'] == 'completed').length;
 
-                return Container(
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border(top: BorderSide(color: AppColors.borderLight.withValues(alpha: 0.5))),
-                  ),
-                  child: Column(
-                    children: [
-                      _buildSummaryCards(context, allTrips.length, activeTripsCount, completedTripsCount),
-                      _buildHorizontalCalendar(),
-                      _buildToolbar(context),
-                      Expanded(
-                        child: ValueListenableBuilder<String>(
+                  return Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      border: Border(top: BorderSide(color: AppColors.borderLight.withValues(alpha: 0.5))),
+                    ),
+                    child: Column(
+                      children: [
+                        _buildSummaryCards(context, allTrips.length, activeTripsCount, completedTripsCount),
+                        _buildHorizontalCalendar(),
+                        _buildToolbar(context),
+                        ValueListenableBuilder<String>(
                           valueListenable: _selectedTabNotifier,
                           builder: (context, selectedTab, _) {
                             return ValueListenableBuilder<DateTime?>(
@@ -101,9 +131,9 @@ class _TripHistoryScreenState extends State<TripHistoryScreen> {
                                     // Date Filter
                                     if (selectedDate != null) {
                                       filteredTrips = filteredTrips.where((t) {
-                                        final startTimeVal = t['startTime'];
-                                        if (startTimeVal == null) return false;
-                                        final date = DateTime.fromMillisecondsSinceEpoch(startTimeVal);
+                                        final parsedTime = TripHistoryScreen.parseTimestamp(t['startTime'], t['tripId']);
+                                        if (parsedTime == null) return false;
+                                        final date = DateTime.fromMillisecondsSinceEpoch(parsedTime);
                                         return date.year == selectedDate.year &&
                                             date.month == selectedDate.month &&
                                             date.day == selectedDate.day;
@@ -127,21 +157,24 @@ class _TripHistoryScreenState extends State<TripHistoryScreen> {
                                       return FadeInSlide(
                                         direction: FadeInDirection.bottomToTop,
                                         child: Center(
-                                          child: Column(
-                                            mainAxisAlignment: MainAxisAlignment.center,
-                                            children: [
-                                              Icon(Icons.history_rounded, size: 64, color: Colors.grey.shade300),
-                                              const SizedBox(height: 16),
-                                              Text(
-                                                'No trips found',
-                                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey.shade600),
-                                              ),
-                                              const SizedBox(height: 8),
-                                              Text(
-                                                'Trips started by drivers will appear here in real-time.',
-                                                style: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-                                              ),
-                                            ],
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(40.0),
+                                            child: Column(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [
+                                                Icon(Icons.history_rounded, size: 64, color: Colors.grey.shade300),
+                                                const SizedBox(height: 16),
+                                                Text(
+                                                  'No trips found',
+                                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey.shade600),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Text(
+                                                  'Trips started by drivers will appear here in real-time.',
+                                                  style: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                                                ),
+                                              ],
+                                            ),
                                           ),
                                         ),
                                       );
@@ -153,45 +186,19 @@ class _TripHistoryScreenState extends State<TripHistoryScreen> {
                             );
                           },
                         ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
-    return FadeInSlide(
-      direction: FadeInDirection.leftToRight,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Trip History Log',
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textDark,
-                  letterSpacing: -0.5,
-                  fontSize: AppResponsiveUtil.isMobile(context) ? 24 : null,
-                ),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Monitor active journeys and audit completed trip logs dynamically.',
-            style: TextStyle(
-              color: AppColors.textSecondary,
-              fontSize: 13,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+
 
   Widget _buildSummaryCards(BuildContext context, int total, int active, int completed) {
     final isMobile = AppResponsiveUtil.isMobile(context);
@@ -277,11 +284,11 @@ class _TripHistoryScreenState extends State<TripHistoryScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(title, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.bold)),
+                Text(title, style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.textDark)),
+                    Text(value, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.textDark)),
                     if (isLive) ...[
                       const SizedBox(width: 8),
                       Container(
@@ -427,7 +434,7 @@ class _TripHistoryScreenState extends State<TripHistoryScreen> {
                           margin: const EdgeInsets.only(right: 10),
                           decoration: BoxDecoration(
                             gradient: isSelected
-                                ? const LinearGradient(
+                                ? LinearGradient(
                                     colors: [AppColors.primaryNavy, Color(0xFF303F9F)],
                                     begin: Alignment.topLeft,
                                     end: Alignment.bottomRight,
@@ -476,7 +483,7 @@ class _TripHistoryScreenState extends State<TripHistoryScreen> {
                                   margin: const EdgeInsets.only(top: 4),
                                   width: 5,
                                   height: 5,
-                                  decoration: const BoxDecoration(
+                                  decoration: BoxDecoration(
                                     color: AppColors.primaryNavy,
                                     shape: BoxShape.circle,
                                   ),
@@ -634,11 +641,11 @@ class _TripHistoryScreenState extends State<TripHistoryScreen> {
         onChanged: (val) => _searchQueryNotifier.value = val,
         decoration: InputDecoration(
           hintText: 'Search by Bus / Route...',
-          hintStyle: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
-          prefixIcon: const Icon(Icons.search, size: 18, color: AppColors.textSecondary),
+          hintStyle: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          prefixIcon: Icon(Icons.search, size: 18, color: AppColors.textSecondary),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: AppColors.borderLight),
+            borderSide: BorderSide(color: AppColors.borderLight),
           ),
           contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
         ),
@@ -652,7 +659,8 @@ class _TripHistoryScreenState extends State<TripHistoryScreen> {
     String? lastHeader;
     for (var trip in trips) {
       final startTimeVal = trip['startTime'];
-      final header = startTimeVal != null ? _getGroupDateHeader(startTimeVal) : 'Unknown Date';
+      final parsedTime = TripHistoryScreen.parseTimestamp(startTimeVal, trip['tripId']);
+      final header = parsedTime != null ? _getGroupDateHeader(parsedTime) : 'Unknown Date';
       if (header != lastHeader) {
         listItems.add(TripListItem.header(header));
         lastHeader = header;
@@ -716,11 +724,11 @@ class _TripHistoryScreenState extends State<TripHistoryScreen> {
       alignment: Alignment.centerLeft,
       child: Row(
         children: [
-          const Icon(Icons.calendar_today_rounded, size: 14, color: AppColors.primaryNavy),
+          Icon(Icons.calendar_today_rounded, size: 14, color: AppColors.primaryNavy),
           const SizedBox(width: 8),
           Text(
             title.toUpperCase(),
-            style: const TextStyle(
+            style: TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 11,
               color: AppColors.primaryNavy,
@@ -755,7 +763,7 @@ class _TripHistoryScreenState extends State<TripHistoryScreen> {
         color: AppColors.primaryNavy.withValues(alpha: 0.02),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      child: const Row(
+      child: Row(
         children: [
           Expanded(flex: 2, child: Text('BUS & VEHICLE', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 10, color: AppColors.primaryNavy, letterSpacing: 1.2))),
           Expanded(flex: 3, child: Text('ROUTE ORIGIN & DESTINATION', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 10, color: AppColors.primaryNavy, letterSpacing: 1.2))),
@@ -787,12 +795,15 @@ class _TripRowState extends State<_TripRow> {
     final startTimeVal = trip['startTime'];
     final endTimeVal = trip['endTime'];
 
-    final String startTimeText = startTimeVal != null
-        ? DateFormat('dd MMM, hh:mm a').format(DateTime.fromMillisecondsSinceEpoch(startTimeVal))
+    final parsedStartTime = TripHistoryScreen.parseTimestamp(startTimeVal, trip['tripId']);
+    final parsedEndTime = TripHistoryScreen.parseTimestamp(endTimeVal);
+
+    final String startTimeText = parsedStartTime != null
+        ? DateFormat('dd MMM, hh:mm a').format(DateTime.fromMillisecondsSinceEpoch(parsedStartTime))
         : 'N/A';
 
-    final String endTimeText = status == 'completed' && endTimeVal != null
-        ? DateFormat('dd MMM, hh:mm a').format(DateTime.fromMillisecondsSinceEpoch(endTimeVal))
+    final String endTimeText = status == 'completed' && parsedEndTime != null
+        ? DateFormat('dd MMM, hh:mm a').format(DateTime.fromMillisecondsSinceEpoch(parsedEndTime))
         : (status == 'active' ? 'Active Now' : 'N/A');
 
     return MouseRegion(
@@ -820,7 +831,7 @@ class _TripRowState extends State<_TripRow> {
                         color: AppColors.primaryNavy.withValues(alpha: 0.05),
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: const Icon(Icons.directions_bus_rounded, color: AppColors.primaryNavy, size: 20),
+                      child: Icon(Icons.directions_bus_rounded, color: AppColors.primaryNavy, size: 20),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -834,7 +845,7 @@ class _TripRowState extends State<_TripRow> {
                         ),
                         Text(
                           trip['plateNumber'] ?? 'No Plate',
-                          style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                          style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
                         ),
                       ],
                     ),
@@ -847,7 +858,7 @@ class _TripRowState extends State<_TripRow> {
               flex: 3,
               child: Text(
                 '${trip['from'] ?? 'Origin'} ➔ ${trip['to'] ?? 'Destination'}',
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textDark),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textDark),
               ),
             ),
             // Gender
@@ -879,7 +890,7 @@ class _TripRowState extends State<_TripRow> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.access_time_rounded, size: 14, color: AppColors.textSecondary),
+                  Icon(Icons.access_time_rounded, size: 14, color: AppColors.textSecondary),
                   const SizedBox(width: 6),
                   Flexible(
                     child: Text(
